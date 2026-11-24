@@ -5,10 +5,6 @@ on:
   pull_request:
   workflow_dispatch:
 
-defaults:
-  run:
-    working-directory: classicube
-
 jobs:
   # ---------------------------------------------------------------
   # Windows x86 (32 bits) y x86_64 (64 bits), cross-compilado con MinGW
@@ -42,8 +38,8 @@ jobs:
         with:
           name: Classic98-windows-${{ matrix.name }}
           path: |
-            classicube/Classic98.exe
-            classicube/Classic98.zip
+            Classic98.exe
+            Classic98.zip
 
   # ---------------------------------------------------------------
   # Android armeabi-v7a + arm64-v8a (un solo APK con ambas)
@@ -92,4 +88,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: Classic98-android-armeabi-v7a-arm64-v8a
-          path: classicube/Classic98-signed.apk
+          path: Classic98-signed.apk
