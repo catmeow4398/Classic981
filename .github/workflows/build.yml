@@ -1,91 +1,76 @@
 name: Build Classic98
-
 on:
   push:
-  pull_request:
+    branches: [main, master]
   workflow_dispatch:
 
 jobs:
-  # ---------------------------------------------------------------
-  # Windows x86 (32 bits) y x86_64 (64 bits), cross-compilado con MinGW
-  # ---------------------------------------------------------------
+  # APK con armeabi-v7a y arm64-v8a (el Makefile de Android tambien incluye armv5, x86 y x86_64)
+  android:
+    timeout-minutes: 25
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/saschpe/android-ndk:34-jdk17.0.8_7-ndk25.2.9519653-cmake3.22.1
+    steps:
+      - uses: actions/checkout@v5
+      - name: Preparar codigo
+        shell: bash
+        run: |
+          apt install -y make wget unzip
+          unzip -q Classic98-source.zip
+          cd classicube
+          mkdir build-tools
+          wget -q https://github.com/ClassiCube/rpi-compiling-stuff/raw/main/build-tools.zip
+          unzip -q build-tools.zip -d build-tools
+          chmod +x build-tools/aapt build-tools/dx build-tools/zipalign
+          keytool -genkeypair -keystore debug.keystore -storepass android -keypass android \
+            -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Classic98, O=Classic98, C=PE"
+      - name: Compilar APK
+        shell: bash
+        run: |
+          cd classicube
+          make android EXTRA_CFLAGS="-fno-stack-protector"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Classic98-apk
+          path: classicube/Classic98-signed.apk
+
+  # Windows x86 y x86_64, cada uno en Direct3D9 y OpenGL
   windows:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: x86
-            prefix: i686-w64-mingw32
+            pkg: gcc-mingw-w64-i686
+            cc: i686-w64-mingw32-gcc
+            entry: _main_real
           - name: x86_64
-            prefix: x86_64-w64-mingw32
+            pkg: gcc-mingw-w64-x86-64
+            cc: x86_64-w64-mingw32-gcc
+            entry: main_real
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Instalar MinGW
-        run: sudo apt-get update && sudo apt-get install -y mingw-w64 zip
-
-      - name: Compilar
+      - uses: actions/checkout@v5
+      - name: Preparar codigo
         run: |
-          make -f misc/makefiles/windows.mk dist -j"$(nproc)" \
-            RELEASE=1 \
-            CC=${{ matrix.prefix }}-gcc \
-            WINDRES=${{ matrix.prefix }}-windres \
-            EXTRA_CFLAGS="-Wno-error" \
-            EXTRA_LDFLAGS="-static -static-libgcc"
-
+          sudo apt-get update
+          sudo apt-get -y install ${{ matrix.pkg }} unzip zip
+          unzip -q Classic98-source.zip
+      - name: Compilar Windows ${{ matrix.name }}
+        shell: bash
+        run: |
+          cd classicube
+          CF="-fno-stack-protector -DCC_NOMAIN -fno-ident"
+          LF="-nostartfiles -Wl,-e${{ matrix.entry }}"
+          make windows RELEASE=1 TARGET=Classic98-Direct3D9 CC=${{ matrix.cc }} EXTRA_CFLAGS="$CF" EXTRA_LDFLAGS="$LF"
+          make windows clean
+          make windows RELEASE=1 TARGET=Classic98-OpenGL CC=${{ matrix.cc }} EXTRA_CFLAGS="$CF -DCC_GFX_BACKEND=CC_GFX_BACKEND_GL1" EXTRA_LDFLAGS="$LF"
       - uses: actions/upload-artifact@v4
         with:
-          name: Classic98-windows-${{ matrix.name }}
+          name: Classic98-Windows-${{ matrix.name }}
           path: |
-            Classic98.exe
-            Classic98.zip
-
-  # ---------------------------------------------------------------
-  # Android armeabi-v7a + arm64-v8a (un solo APK con ambas)
-  # ---------------------------------------------------------------
-  android:
-    runs-on: ubuntu-latest
-    env:
-      NDK_VERSION: 25.2.9519653
-      BUILD_TOOLS_VERSION: 30.0.3   # ultima version que incluye "dx"
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-
-      - name: Instalar SDK / NDK
-        run: |
-          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          yes | "$SDKM" --licenses > /dev/null || true
-          "$SDKM" "platforms;android-34" \
-                  "build-tools;${BUILD_TOOLS_VERSION}" \
-                  "ndk;${NDK_VERSION}"
-
-      - name: Crear keystore de debug
-        run: |
-          keytool -genkey -v -keystore debug.keystore \
-            -storepass android -keypass android \
-            -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US"
-
-      - name: Limitar el APK a armeabi-v7a y arm64-v8a
-        run: |
-          sed '/^\$(UNSIGNED_APK):/ { s/ \$(ARM_v5_LIB)//; s/ \$(X86_32_LIB)//; s/ \$(X86_64_LIB)//; }' \
-            misc/android/Makefile > Makefile.android-ci
-          grep -n '^\$(UNSIGNED_APK):' Makefile.android-ci
-
-      - name: Compilar APK
-        run: |
-          make -f Makefile.android-ci -j"$(nproc)" \
-            NDK_ROOT="$ANDROID_HOME/ndk/${NDK_VERSION}" \
-            TOOLS_ROOT="$ANDROID_HOME/build-tools/${BUILD_TOOLS_VERSION}" \
-            SDK_ROOT="$ANDROID_HOME/platforms/android-34"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Classic98-android-armeabi-v7a-arm64-v8a
-          path: Classic98-signed.apk
+            classicube/Classic98-Direct3D9.exe
+            classicube/Classic98-OpenGL.exe
