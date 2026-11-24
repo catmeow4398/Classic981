@@ -1,0 +1,91 @@
+name: Build Classic98
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # ---------------------------------------------------------------
+  # Windows x86 (32 bits) y x86_64 (64 bits), cross-compilado con MinGW
+  # ---------------------------------------------------------------
+  windows:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86
+            prefix: i686-w64-mingw32
+          - name: x86_64
+            prefix: x86_64-w64-mingw32
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar MinGW
+        run: sudo apt-get update && sudo apt-get install -y mingw-w64 zip
+
+      - name: Compilar
+        run: |
+          make -f misc/makefiles/windows.mk dist -j"$(nproc)" \
+            RELEASE=1 \
+            CC=${{ matrix.prefix }}-gcc \
+            WINDRES=${{ matrix.prefix }}-windres \
+            EXTRA_CFLAGS="-Wno-error" \
+            EXTRA_LDFLAGS="-static -static-libgcc"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Classic98-windows-${{ matrix.name }}
+          path: |
+            Classic98.exe
+            Classic98.zip
+
+  # ---------------------------------------------------------------
+  # Android armeabi-v7a + arm64-v8a (un solo APK con ambas)
+  # ---------------------------------------------------------------
+  android:
+    runs-on: ubuntu-latest
+    env:
+      NDK_VERSION: 25.2.9519653
+      BUILD_TOOLS_VERSION: 30.0.3   # ultima version que incluye "dx"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Instalar SDK / NDK
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platforms;android-34" \
+                  "build-tools;${BUILD_TOOLS_VERSION}" \
+                  "ndk;${NDK_VERSION}"
+
+      - name: Crear keystore de debug
+        run: |
+          keytool -genkey -v -keystore debug.keystore \
+            -storepass android -keypass android \
+            -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+
+      - name: Limitar el APK a armeabi-v7a y arm64-v8a
+        run: |
+          sed '/^\$(UNSIGNED_APK):/ { s/ \$(ARM_v5_LIB)//; s/ \$(X86_32_LIB)//; s/ \$(X86_64_LIB)//; }' \
+            misc/android/Makefile > Makefile.android-ci
+          grep -n '^\$(UNSIGNED_APK):' Makefile.android-ci
+
+      - name: Compilar APK
+        run: |
+          make -f Makefile.android-ci -j"$(nproc)" \
+            NDK_ROOT="$ANDROID_HOME/ndk/${NDK_VERSION}" \
+            TOOLS_ROOT="$ANDROID_HOME/build-tools/${BUILD_TOOLS_VERSION}" \
+            SDK_ROOT="$ANDROID_HOME/platforms/android-34"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Classic98-android-armeabi-v7a-arm64-v8a
+          path: Classic98-signed.apk
